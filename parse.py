@@ -23,15 +23,33 @@ load_dotenv()
 template = (
     "You are tasked with extracting and structuring information from the following text content: {dom_content}. "
     "Based on the user's description: {parse_description}, extract the relevant data and return it as a JSON object. "
+    
+    "CRITICAL EXTRACTION REQUIREMENTS: "
+    "- Extract ALL matching records from the content, not just a few examples "
+    "- If there are 50 people mentioned, extract ALL 50 people "
+    "- If there are 100 products listed, extract ALL 100 products "
+    "- DO NOT limit yourself to only a few items - extract EVERYTHING that matches "
+    
     "IMPORTANT FIELD NAMING RULES: "
     "- Use Vietnamese field names without spaces or special characters "
     "- Convert Vietnamese field names to camelCase format "
     "- Examples: 'Họ và tên' → 'HoVaTen', 'Năm sinh' → 'NamSinh', 'Quê quán' → 'QueQuan', "
     "'Trình độ chuyên môn' → 'TrinhDoChuyenMon', 'Chức vụ' → 'ChucVu', 'Đoàn ĐBQH' → 'DoanDBQH', "
-    "'Đạt % số phiếu' → 'SoPhieu', 'Số phiếu' → 'SoPhieu' "
-    "If you find multiple items (like multiple people), return them as a list of JSON objects with the same field structure. "
-    "Each JSON object should represent one complete record (e.g., one person's information). "
-    "Only return valid JSON, no additional text or explanations."
+    "'Đạt % số phiếu' → 'SoPhieu', 'Số phiếu' → 'SoPhieu', 'Địa chỉ ảnh' → 'DiaChiAnh', "
+    "'URLs hình ảnh' → 'URLsHinhAnh', 'Links' → 'Links', 'Liên kết' → 'LienKet' "
+    
+    "SPECIAL HANDLING FOR LINKS AND MEDIA: "
+    "- Links appear as: 'text [LINK: url]' - extract both text and URL if requested "
+    "- Images appear as: '[IMAGE: Alt: description | URL: image_url]' - extract URLs if requested "
+    "- Videos appear as: '[VIDEO: video_url]' - extract URLs if requested "
+    "- Audio appears as: '[AUDIO: audio_url]' - extract URLs if requested "
+    
+    "OUTPUT FORMAT: "
+    "- If you find multiple items (like multiple people), return them as a list of JSON objects with the same field structure "
+    "- Each JSON object should represent one complete record (e.g., one person's information) "
+    "- Extract ALL records found in this content chunk, not just the first few "
+    "- Only return valid JSON, no additional text or explanations "
+    "- If no matching data found, return an empty list: []"
 )
 
 # Lấy tên model từ biến môi trường, mặc định là llama3:latest
@@ -85,7 +103,24 @@ def normalize_field_names(data):
         'số phiếu': 'SoPhieu',
         'so_phieu': 'SoPhieu',
         'votes': 'SoPhieu',
-        'vote_percentage': 'SoPhieu'
+        'vote_percentage': 'SoPhieu',
+        
+        # Links và Images
+        'links': 'Links',
+        'link': 'Links',
+        'url': 'URL',
+        'urls': 'URLs',
+        'image': 'HinhAnh',
+        'images': 'HinhAnh',
+        'hình ảnh': 'HinhAnh',
+        'ảnh': 'HinhAnh',
+        'img': 'HinhAnh',
+        'video': 'Video',
+        'audio': 'Audio',
+        'media': 'Media',
+        'địa chỉ ảnh': 'DiaChiAnh',
+        'đường dẫn': 'DuongDan',
+        'liên kết': 'LienKet'
     }
     
     def normalize_item(item):
@@ -114,12 +149,17 @@ def parse_with_ollama(dom_chunks, parse_description):
 
     parsed_results = []
     all_data = []
+    successful_chunks = 0
+    total_records_extracted = 0
 
+    print(f"Bắt đầu xử lý {len(dom_chunks)} chunks...")
+    
     for i, chunk in enumerate(dom_chunks, start=1):
+        print(f"Đang xử lý chunk {i}/{len(dom_chunks)} (kích thước: {len(chunk)} ký tự)...")
+        
         response = chain.invoke(
             {"dom_content": chunk, "parse_description": parse_description}
         )
-        print(f"Parsed batch: {i} of {len(dom_chunks)}")
         parsed_results.append(response)
         
         # Thử parse JSON từ response
@@ -131,22 +171,46 @@ def parse_with_ollama(dom_chunks, parse_description):
             # Chuẩn hóa tên field
             json_data = normalize_field_names(json_data)
             
+            # Đếm số records từ chunk này
+            chunk_records = 0
+            
             # Nếu là list, extend vào all_data
             if isinstance(json_data, list):
+                chunk_records = len(json_data)
                 all_data.extend(json_data)
             # Nếu là dict, append vào all_data
-            elif isinstance(json_data, dict):
+            elif isinstance(json_data, dict) and json_data:
+                chunk_records = 1
                 all_data.append(json_data)
+            
+            if chunk_records > 0:
+                successful_chunks += 1
+                total_records_extracted += chunk_records
+                print(f"✅ Chunk {i}: Trích xuất được {chunk_records} records")
+            else:
+                print(f"⚠️ Chunk {i}: Không tìm thấy dữ liệu phù hợp")
+                
         except (json.JSONDecodeError, Exception) as e:
-            print(f"Không thể parse JSON từ batch {i}: {e}")
-            # Giữ response gốc nếu không parse được JSON
+            print(f"❌ Chunk {i}: Không thể parse JSON - {e}")
+            # In ra một phần response để debug
+            print(f"Response preview: {response[:200]}...")
             continue
 
+    print(f"\n📊 Kết quả tổng hợp:")
+    print(f"- Tổng chunks: {len(dom_chunks)}")
+    print(f"- Chunks thành công: {successful_chunks}")
+    print(f"- Tổng records trích xuất: {total_records_extracted}")
+    
     # Lưu dữ liệu vào session state để có thể tải xuống
     return {
         'text_results': parsed_results,
         'structured_data': all_data,
-        'combined_text': "\n".join(parsed_results)
+        'combined_text': "\n".join(parsed_results),
+        'stats': {
+            'total_chunks': len(dom_chunks),
+            'successful_chunks': successful_chunks,
+            'total_records': total_records_extracted
+        }
     }
 
 def clean_json_response(response):

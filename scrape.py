@@ -187,7 +187,7 @@ def clean_body_content(body_content):
     return cleaned_content
 
 
-def split_dom_content(dom_content, max_length=8000, max_batches=20):
+def split_dom_content(dom_content, max_length=8000, max_batches=50):
     chunks = [
         dom_content[i : i + max_length] for i in range(0, len(dom_content), max_length)
     ]

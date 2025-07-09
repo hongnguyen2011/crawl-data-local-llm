@@ -8,7 +8,9 @@ from scrape_utils import (
     scrape_website_nobright_only,
     extract_body_content,
     clean_body_content,
+    clean_body_content_with_links_and_images,
     split_dom_content,
+    analyze_content_for_missing_data,
 )
 from parse import parse_with_ollama
 
@@ -21,6 +23,31 @@ scrape_method = st.selectbox(
     "Chọn phương thức scraping:",
     ("Tự động (Combined)", "Chỉ Chrome (No BrightData)", "BrightData")
 )
+
+# Tùy chọn crawl links và images
+include_links_images = st.checkbox(
+    "Crawl links và địa chỉ ảnh", 
+    value=False,
+    help="Khi bật, sẽ thu thập thông tin về links và URLs của hình ảnh"
+)
+
+# Tùy chọn nâng cao
+with st.expander("⚙️ Cài đặt nâng cao"):
+    col1, col2 = st.columns(2)
+    with col1:
+        chunk_size = st.selectbox(
+            "Kích thước chunk xử lý:",
+            [4000, 8000, 12000, 16000, 20000],
+            index=1,  # Default 6000
+            help="Chunk nhỏ hơn = xử lý chính xác hơn nhưng chậm hơn"
+        )
+    with col2:
+        max_chunks = st.selectbox(
+            "Số chunks tối đa:",
+            [30, 50, 70, 100],
+            index=1,  # Default 50
+            help="Tăng để xử lý nhiều dữ liệu hơn"
+        )
 
 # Step 1: Scrape the Website
 if st.button("Scrape Website"):
@@ -37,7 +64,12 @@ if st.button("Scrape Website"):
                 dom_content = scrape_website_combined(url)
                 
             body_content = extract_body_content(dom_content)
-            cleaned_content = clean_body_content(body_content)
+            
+            # Sử dụng hàm cleaning phù hợp dựa trên lựa chọn của người dùng
+            if include_links_images:
+                cleaned_content = clean_body_content_with_links_and_images(body_content, base_url=url)
+            else:
+                cleaned_content = clean_body_content(body_content)
 
             # Store the DOM content in Streamlit session state
             st.session_state.dom_content = cleaned_content
@@ -46,7 +78,11 @@ if st.button("Scrape Website"):
             with st.expander("Xem nội dung DOM"):
                 st.text_area("Nội dung DOM", cleaned_content, height=300)
                 
-            st.success("Scraping thành công!")
+            # Hiển thị thông báo về mode crawling
+            if include_links_images:
+                st.success("Scraping thành công! ✅ Đã bao gồm links và địa chỉ ảnh")
+            else:
+                st.success("Scraping thành công! ℹ️ Chỉ text content (không bao gồm links/ảnh)")
             
         except Exception as e:
             st.error(f"Lỗi khi scraping: {str(e)}")
@@ -72,12 +108,26 @@ if "dom_content" in st.session_state:
         - Chức vụ → ChucVu
         - Đoàn ĐBQH → DoanDBQH
         - Đạt % số phiếu → SoPhieu
+        
+        **Khi bật "Crawl links và địa chỉ ảnh":**
+        - Links sẽ hiển thị dạng: "Text link [LINK: url]"
+        - Hình ảnh sẽ hiển thị dạng: "[IMAGE: Alt: mô tả | URL: địa chỉ]"
+        - Video/Audio sẽ hiển thị dạng: "[VIDEO: url]" hoặc "[AUDIO: url]"
+        - Bạn có thể yêu cầu AI trích xuất: "URLs của hình ảnh, Links trang web, Địa chỉ video"
         """)
+    
+    # Thay đổi placeholder dựa trên việc có bật crawl links/images hay không
+    if include_links_images:
+        placeholder_text = "Ví dụ: Họ và tên, Năm sinh, URLs hình ảnh, Links trang web, Địa chỉ video"
+        help_text = "Nhập các thông tin bạn muốn trích xuất, bao gồm links và URLs media, cách nhau bằng dấu phẩy"
+    else:
+        placeholder_text = "Ví dụ: Họ và tên, Năm sinh, Quê quán, Trình độ chuyên môn, Chức vụ, Đoàn ĐBQH, Đạt % số phiếu"
+        help_text = "Nhập các thông tin bạn muốn trích xuất, cách nhau bằng dấu phẩy"
     
     parse_description = st.text_area(
         "Mô tả những gì bạn muốn phân tích từ nội dung:",
-        placeholder="Ví dụ: Họ và tên, Năm sinh, Quê quán, Trình độ chuyên môn, Chức vụ, Đoàn ĐBQH, Đạt % số phiếu",
-        help="Nhập các thông tin bạn muốn trích xuất, cách nhau bằng dấu phẩy"
+        placeholder=placeholder_text,
+        help=help_text
     )
 
     if st.button("Phân tích nội dung"):
@@ -86,15 +136,30 @@ if "dom_content" in st.session_state:
 
             try:
                 # Parse the content with Ollama
-                dom_chunks = split_dom_content(st.session_state.dom_content)
+                dom_chunks = split_dom_content(
+                    st.session_state.dom_content, 
+                    max_length=chunk_size, 
+                    max_batches=max_chunks
+                )
                 parsed_result = parse_with_ollama(dom_chunks, parse_description)
                 
                 # Lưu kết quả vào session state
                 st.session_state.parsed_data = parsed_result
                 
+                # Hiển thị thống kê xử lý
+                if 'stats' in parsed_result:
+                    stats = parsed_result['stats']
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Tổng chunks", stats['total_chunks'])
+                    with col2:
+                        st.metric("Chunks thành công", stats['successful_chunks'])
+                    with col3:
+                        st.metric("Tổng records", stats['total_records'])
+                
                 # Hiển thị kết quả dưới dạng bảng nếu có dữ liệu structured
                 if parsed_result['structured_data']:
-                    st.success(f"Đã phân tích được {len(parsed_result['structured_data'])} mục dữ liệu có cấu trúc!")
+                    st.success(f"🎉 Đã phân tích được {len(parsed_result['structured_data'])} mục dữ liệu có cấu trúc!")
                     
                     # Tạo DataFrame để hiển thị
                     df = pd.DataFrame(parsed_result['structured_data'])
@@ -103,6 +168,28 @@ if "dom_content" in st.session_state:
                     
                     # Hiển thị thông tin về các cột
                     st.info(f"Các cột dữ liệu: {', '.join(df.columns.tolist())}")
+                    
+                    # Hiển thị cảnh báo nếu có vẻ như thiếu dữ liệu
+                    if 'stats' in parsed_result and parsed_result['stats']['total_records'] < 50:
+                        st.warning("⚠️ Số lượng records có vẻ thấp. Đang phân tích nguyên nhân...")
+                        
+                        # Phân tích content để tìm nguyên nhân
+                        analysis = analyze_content_for_missing_data(st.session_state.dom_content)
+                        
+                        if analysis['potential_issues']:
+                            st.write("**Các vấn đề phát hiện:**")
+                            for issue in analysis['potential_issues']:
+                                st.write(f"- {issue}")
+                        
+                        if analysis['suggestions']:
+                            st.write("**Gợi ý khắc phục:**")
+                            for suggestion in analysis['suggestions']:
+                                st.write(f"- {suggestion}")
+                        
+                        st.write("**Các bước kiểm tra khác:**")
+                        st.write("- Kiểm tra mô tả phân tích có chính xác không")
+                        st.write("- Thử scrape lại website với thời gian chờ lâu hơn")
+                        st.write("- Thử tăng kích thước chunk hoặc số chunks tối đa")
                 else:
                     # Hiển thị text nếu không có structured data
                     st.write(parsed_result['combined_text'])

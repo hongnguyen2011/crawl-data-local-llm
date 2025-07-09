@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import os
 import re
+from urllib.parse import urljoin, urlparse
 
 load_dotenv()
 SBR_WEBDRIVER = os.getenv("SBR_WEBDRIVER")
@@ -217,7 +218,116 @@ def clean_body_content(body_content):
     return cleaned_content
 
 
-def split_dom_content(dom_content, max_length=8000, max_batches=20):
+def clean_body_content_with_links_and_images(body_content, base_url=None):
+    """
+    Làm sạch nội dung HTML nhưng giữ lại thông tin về links và images
+    
+    Args:
+        body_content (str): HTML content của body
+        base_url (str): Base URL để convert relative URLs thành absolute URLs
+        
+    Returns:
+        str: Cleaned content với thông tin links và images được giữ lại
+    """
+    soup = BeautifulSoup(body_content, "html.parser")
+
+    def make_absolute_url(url, base_url):
+        """Chuyển đổi relative URL thành absolute URL"""
+        if not url or not base_url:
+            return url
+        try:
+            return urljoin(base_url, url)
+        except:
+            return url
+
+    # Loại bỏ script và style
+    for script_or_style in soup(["script", "style"]):
+        script_or_style.extract()
+
+    # Xử lý images - thêm thông tin src vào text
+    for img in soup.find_all('img'):
+        img_src = img.get('src', '')
+        img_alt = img.get('alt', '')
+        img_title = img.get('title', '')
+        
+        # Chuyển đổi relative URL thành absolute URL
+        if img_src and base_url:
+            img_src = make_absolute_url(img_src, base_url)
+        
+        # Tạo text mô tả cho image
+        img_info = []
+        if img_alt:
+            img_info.append(f"Alt: {img_alt}")
+        if img_title:
+            img_info.append(f"Title: {img_title}")
+        if img_src:
+            img_info.append(f"URL: {img_src}")
+            
+        img_text = f"[IMAGE: {' | '.join(img_info)}]" if img_info else "[IMAGE]"
+        img.replace_with(img_text)
+
+    # Xử lý links - thêm thông tin href vào text
+    for link in soup.find_all('a'):
+        link_href = link.get('href', '')
+        link_text = link.get_text(strip=True)
+        link_title = link.get('title', '')
+        
+        # Chuyển đổi relative URL thành absolute URL
+        if link_href and base_url:
+            link_href = make_absolute_url(link_href, base_url)
+        
+        # Tạo text cho link
+        if link_href:
+            if link_text:
+                # Nếu có text và href
+                link_replacement = f"{link_text} [LINK: {link_href}]"
+            else:
+                # Nếu chỉ có href
+                link_replacement = f"[LINK: {link_href}]"
+        else:
+            # Nếu không có href, chỉ giữ text
+            link_replacement = link_text
+            
+        if link_title:
+            link_replacement += f" [Title: {link_title}]"
+            
+        link.replace_with(link_replacement)
+
+    # Xử lý các thẻ media khác (video, audio, source)
+    for media in soup.find_all(['video', 'audio', 'source']):
+        media_src = media.get('src', '')
+        media_type = media.name.upper()
+        
+        # Chuyển đổi relative URL thành absolute URL
+        if media_src and base_url:
+            media_src = make_absolute_url(media_src, base_url)
+        
+        if media_src:
+            media.replace_with(f"[{media_type}: {media_src}]")
+        else:
+            media.replace_with(f"[{media_type}]")
+
+    # Lấy text đã được xử lý
+    cleaned_content = soup.get_text(separator="\n")
+    cleaned_content = "\n".join(
+        line.strip() for line in cleaned_content.splitlines() if line.strip()
+    )
+
+    return cleaned_content
+
+
+def split_dom_content(dom_content, max_length=8000, max_batches=50):
+    """
+    Phân chia DOM content thành các chunks nhỏ hơn để AI có thể xử lý tốt hơn
+    
+    Args:
+        dom_content (str): Nội dung DOM cần phân chia
+        max_length (int): Độ dài tối đa mỗi chunk (giảm xuống để AI xử lý tốt hơn)
+        max_batches (int): Số lượng batch tối đa (tăng lên để xử lý nhiều dữ liệu hơn)
+    
+    Returns:
+        list: Danh sách các chunks
+    """
     chunks = [
         dom_content[i : i + max_length] for i in range(0, len(dom_content), max_length)
     ]
@@ -227,6 +337,8 @@ def split_dom_content(dom_content, max_length=8000, max_batches=20):
             f"({max_batches} batches of {max_length} characters each). Please provide a shorter URL or "
             f"adjust the content length."
         )
+    
+    print(f"Chia DOM content thành {len(chunks)} chunks, mỗi chunk tối đa {max_length} ký tự")
     return chunks
 
 
@@ -244,3 +356,64 @@ def scrape_website_nobright_only(website, timeout=5):
     """
     print("Scraping using nobright method only...")
     return scrape_website_nobright(website, timeout)
+
+
+def analyze_content_for_missing_data(dom_content):
+    """
+    Phân tích DOM content để tìm dấu hiệu có thể có nhiều dữ liệu hơn
+    
+    Args:
+        dom_content (str): Nội dung DOM đã được clean
+        
+    Returns:
+        dict: Thông tin phân tích và gợi ý
+    """
+    analysis = {
+        'total_length': len(dom_content),
+        'potential_issues': [],
+        'suggestions': []
+    }
+    
+    # Kiểm tra các dấu hiệu pagination
+    pagination_keywords = [
+        'trang tiếp', 'next page', 'load more', 'xem thêm', 
+        'pagination', 'trang', 'page', 'show more',
+        'infinite scroll', 'lazy load'
+    ]
+    
+    for keyword in pagination_keywords:
+        if keyword.lower() in dom_content.lower():
+            analysis['potential_issues'].append(f"Phát hiện từ khóa phân trang: '{keyword}'")
+            analysis['suggestions'].append("Website có thể sử dụng phân trang - cần crawl nhiều trang")
+            break
+    
+    # Kiểm tra JavaScript dynamic loading
+    js_indicators = [
+        'loading...', 'đang tải', 'spinner', 'skeleton',
+        'data-lazy', 'lazy-load', 'dynamic'
+    ]
+    
+    for indicator in js_indicators:
+        if indicator.lower() in dom_content.lower():
+            analysis['potential_issues'].append(f"Phát hiện loading động: '{indicator}'")
+            analysis['suggestions'].append("Nội dung có thể được load bằng JavaScript - cần tăng thời gian chờ")
+            break
+    
+    # Kiểm tra table với ít rows
+    if 'table' in dom_content.lower():
+        row_count = dom_content.lower().count('<tr>') + dom_content.lower().count('row')
+        if row_count < 10:
+            analysis['potential_issues'].append(f"Phát hiện bảng với ít dòng dữ liệu: {row_count}")
+            analysis['suggestions'].append("Bảng có thể chưa load đầy đủ dữ liệu")
+    
+    # Kiểm tra list items
+    list_count = dom_content.lower().count('<li>') + dom_content.lower().count('item')
+    if list_count < 20:
+        analysis['potential_issues'].append(f"Phát hiện ít items trong danh sách: {list_count}")
+    
+    # Kiểm tra content length
+    if len(dom_content) < 50000:
+        analysis['potential_issues'].append("Nội dung tương đối ngắn")
+        analysis['suggestions'].append("Trang web có thể chưa load đầy đủ nội dung")
+    
+    return analysis
