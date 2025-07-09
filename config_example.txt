@@ -18,6 +18,19 @@
 - **Chỉ Chrome (No BrightData)**: Chỉ sử dụng Chrome driver, không cần cấu hình gì thêm
 - **BrightData**: Bắt buộc phải có cấu hình SBR_WEBDRIVER trong file .env
 
+## Cấu hình mô hình AI:
+
+Tạo file .env để cấu hình:
+```
+# Cấu hình mô hình Ollama (tùy chọn)
+OLLAMA_MODEL=llama3:latest
+
+# Cấu hình BrightData (tùy chọn) 
+SBR_WEBDRIVER=wss://brd-customer-hl_xxxxxxxx-zone-ai_webscraper:xxxxxxxx@brd.superproxy.io:9222
+```
+
 ## Lưu ý:
 - File chromedriver.exe phải có trong thư mục gốc
-- Đảm bảo Chrome browser đã được cài đặt 
+- Đảm bảo Chrome browser đã được cài đặt
+- Cần cài đặt: pip install pandas openpyxl (để xuất Excel)
+- Mô hình mặc định là llama3:latest nếu không cấu hình OLLAMA_MODEL 

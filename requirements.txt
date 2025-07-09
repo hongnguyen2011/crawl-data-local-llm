@@ -8,3 +8,5 @@ html5lib
 python-dotenv
 python-docx
 webdriver-manager
+pandas
+openpyxl
