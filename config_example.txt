@@ -1,0 +1,23 @@
+# Hướng dẫn cấu hình cho AI Web Scraper
+
+## Cách sử dụng:
+
+1. **Không cần BrightData**: 
+   - Chọn "Chỉ Chrome (No BrightData)" trong dropdown
+   - Không cần file .env
+   - Chỉ cần có chromedriver.exe trong thư mục
+
+2. **Sử dụng BrightData** (tùy chọn):
+   - Tạo file .env trong thư mục gốc
+   - Thêm dòng: SBR_WEBDRIVER=wss://brd-customer-hl_xxxxxxxx-zone-ai_webscraper:xxxxxxxx@brd.superproxy.io:9222
+   - Thay thế xxxxxxxx bằng thông tin thực tế từ BrightData
+
+## Các phương thức scraping:
+
+- **Tự động (Combined)**: Thử Chrome trước, nếu gặp captcha và có BrightData thì chuyển sang BrightData
+- **Chỉ Chrome (No BrightData)**: Chỉ sử dụng Chrome driver, không cần cấu hình gì thêm
+- **BrightData**: Bắt buộc phải có cấu hình SBR_WEBDRIVER trong file .env
+
+## Lưu ý:
+- File chromedriver.exe phải có trong thư mục gốc
+- Đảm bảo Chrome browser đã được cài đặt 
